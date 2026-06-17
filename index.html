@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuitFondo — Eliminador de Fondos con IA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        display: ['"Space Grotesk"', 'sans-serif'],
+                        body: ['"DM Sans"', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --bg: #08090a;
+            --bg-elevated: #111214;
+            --card: rgba(17, 18, 20, 0.7);
+            --border: rgba(255, 255, 255, 0.06);
+            --fg: #f0f0f0;
+            --muted: #71717a;
+            --accent: #10b981;
+            --accent-glow: rgba(16, 185, 129, 0.3);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ===== Fondo animado ===== */
+        .bg-gradient-animated {
+            position: fixed; inset: 0;
+            z-index: 0; pointer-events: none;
+        }
+        .bg-blob {
+            position: absolute; border-radius: 50%;
+            filter: blur(130px); opacity: 0.13;
+            animation: blobFloat 22s ease-in-out infinite;
+        }
+        .bg-blob-1 { width: 600px; height: 600px; background: var(--accent); top: -200px; left: -100px; }
+        .bg-blob-2 { width: 500px; height: 500px; background: #06b6d4; bottom: -150px; right: -100px; animation-delay: -7s; animation-duration: 28s; }
+        .bg-blob-3 { width: 350px; height: 350px; background: #f59e0b; top: 40%; left: 50%; animation-delay: -14s; animation-duration: 32s; opacity: 0.07; }
+        @keyframes blobFloat {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            25% { transform: translate(50px, -30px) scale(1.1); }
+            50% { transform: translate(-20px, 40px) scale(0.95); }
+            75% { transform: translate(30px, 20px) scale(1.05); }
+        }
+        .grid-bg {
+            position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+            background-size: 60px 60px;
+        }
+        #particles-canvas { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+        .content { position: relative; z-index: 1; }
+
+        /* ===== Zona de subida ===== */
+        .upload-zone {
+            border: 2px dashed rgba(255,255,255,0.1);
+            border-radius: 20px;
+            transition: all 0.4s cubic-bezier(0.4,0,0.2,1);
+            cursor: pointer; position: relative; overflow: hidden;
+        }
+        .upload-zone::before {
+            content: ''; position: absolute; inset: 0;
+            background: radial-gradient(circle at center, var(--accent-glow), transparent 70%);
+            opacity: 0; transition: opacity 0.4s;
+        }
+        .upload-zone:hover, .upload-zone.drag-over {
+            border-color: var(--accent); background: rgba(16,185,129,0.04);
+        }
+        .upload-zone:hover::before, .upload-zone.drag-over::before { opacity: 1; }
+        .upload-zone.drag-over { transform: scale(1.01); }
+        .upload-icon { transition: transform 0.4s cubic-bezier(0.4,0,0.2,1); }
+        .upload-zone:hover .upload-icon { transform: translateY(-4px); }
+
+        /* ===== Checkerboard ===== */
+        .checkerboard {
+            background-image:
+                linear-gradient(45deg, #1a1a1e 25%, transparent 25%),
+                linear-gradient(-45deg, #1a1a1e 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #1a1a1e 75%),
+                linear-gradient(-45deg, transparent 75%, #1a1a1e 75%);
+            background-size: 16px 16px;
+            background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+            background-color: #252529;
+        }
+
+        /* ===== Comparador antes/después ===== */
+        .comparison-container {
+            position: relative; overflow: hidden;
+            border-radius: 16px; user-select: none; -webkit-user-select: none;
+        }
+        .comparison-before-wrapper {
+            position: absolute; top: 0; left: 0;
+            height: 100%; overflow: hidden; z-index: 2;
+        }
+        .comparison-before-wrapper img { height: 100%; display: block; }
+        .comparison-divider {
+            position: absolute; top: 0; width: 3px; height: 100%;
+            background: white; z-index: 3; cursor: ew-resize;
+            box-shadow: 0 0 16px rgba(0,0,0,0.6);
+        }
+        .comparison-handle {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 44px; height: 44px; border-radius: 50%;
+            background: white; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 14px rgba(0,0,0,0.45);
+            color: #111; font-size: 14px;
+        }
+        .comparison-label {
+            position: absolute; bottom: 16px; padding: 6px 14px;
+            border-radius: 8px; background: rgba(0,0,0,0.72);
+            backdrop-filter: blur(8px); font-size: 13px; font-weight: 500;
+            z-index: 4; pointer-events: none;
+        }
+
+        /* ===== Barra de progreso ===== */
+        .progress-bar-track {
+            height: 6px; border-radius: 3px;
+            background: rgba(255,255,255,0.07); overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%; border-radius: 3px;
+            background: linear-gradient(90deg, var(--accent), #34d399);
+            transition: width 0.3s ease; position: relative;
+        }
+        .progress-bar-fill::after {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+        .pulse-ring { animation: pulseRing 2s ease-out infinite; }
+        @keyframes pulseRing { 0% { transform: scale(0.8); opacity: 1; } 100% { transform: scale(2.2); opacity: 0; } }
+
+        /* ===== Botones ===== */
+        .btn-primary {
+            background: var(--accent); color: #000; font-weight: 600;
+            padding: 12px 28px; border-radius: 12px; border: none; cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+            font-family: inherit; font-size: 15px;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-primary:hover { background: #34d399; transform: translateY(-1px); box-shadow: 0 8px 24px var(--accent-glow); }
+        .btn-primary:active { transform: translateY(0); }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.06); color: var(--fg); font-weight: 500;
+            padding: 12px 28px; border-radius: 12px; border: 1px solid var(--border);
+            cursor: pointer; transition: all 0.3s; font-family: inherit; font-size: 15px;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-secondary:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.15); }
+
+        /* ===== Toast ===== */
+        .toast-container { position: fixed; top: 24px; right: 24px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+        .toast {
+            padding: 14px 20px; border-radius: 12px; background: var(--bg-elevated);
+            border: 1px solid var(--border); backdrop-filter: blur(12px);
+            font-size: 14px; display: flex; align-items: center; gap: 10px;
+            animation: toastIn 0.4s cubic-bezier(0.4,0,0.2,1);
+            max-width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+        }
+        .toast.toast-out { animation: toastOut 0.3s ease forwards; }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40px); } }
+
+        /* ===== Tarjetas ===== */
+        .feature-card {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 16px; padding: 28px; backdrop-filter: blur(12px);
+            transition: all 0.3s;
+        }
+        .feature-card:hover { border-color: rgba(255,255,255,0.12); transform: translateY(-2px); }
+
+        .file-tag {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 12px; border-radius: 8px;
+            background: rgba(255,255,255,0.06); font-size: 12px; color: var(--muted);
+        }
+
+        .fade-in { animation: fadeIn 0.6s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+        .spinner {
+            border: 2.5px solid rgba(255,255,255,0.12);
+            border-top-color: var(--accent);
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== Scrollbar ===== */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+        }
+        @media (max-width: 640px) {
+            .upload-zone { padding: 40px 20px !important; }
+            .comparison-handle { width: 36px; height: 36px; font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Fondo decorativo -->
+    <div class="bg-gradient-animated">
+        <div class="bg-blob bg-blob-1"></div>
+        <div class="bg-blob bg-blob-2"></div>
+        <div class="bg-blob bg-blob-3"></div>
+    </div>
+    <div class="grid-bg"></div>
+    <canvas id="particles-canvas"></canvas>
+
+    <!-- Toast -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <div class="content">
+        <!-- Cabecera -->
+        <header class="pt-8 pb-4 px-6 text-center">
+            <div class="flex items-center justify-center gap-3 mb-4">
+                <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                    <i class="fa-solid fa-wand-magic-sparkles text-black text-sm"></i>
+                </div>
+                <h1 class="font-display text-2xl font-bold tracking-tight">QuitFondo</h1>
+            </div>
+            <p class="text-zinc-400 text-base max-w-lg mx-auto leading-relaxed">
+                Elimina el fondo de cualquier imagen al instante usando inteligencia artificial.
+                Todo se procesa en tu navegador — tu imagen nunca sale de tu dispositivo.
+            </p>
+            <div class="inline-flex items-center gap-2 mt-4 px-4 py-2 rounded-full bg-amber-500/8 border border-amber-500/15 text-amber-300/80 text-xs">
+                <i class="fa-solid fa-circle-info"></i>
+                <span>Primera vez: se descarga un modelo de ~40 MB (luego se guarda en cache)</span>
+            </div>
+        </header>
+
+        <main class="max-w-3xl mx-auto px-6 pb-20">
+
+            <!-- ===== SUBIR IMAGEN ===== -->
+            <section id="upload-section" class="mt-8 fade-in">
+                <div class="upload-zone p-16 text-center" id="upload-zone"
+                     role="button" tabindex="0" aria-label="Subir imagen para quitar el fondo">
+                    <div class="upload-icon inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-emerald-500/10 mb-6">
+                        <i class="fa-solid fa-cloud-arrow-up text-3xl text-emerald-400"></i>
+                    </div>
+                    <p class="font-display text-lg font-semibold mb-2">Arrastra tu imagen aqui</p>
+                    <p class="text-zinc-500 text-sm mb-6">o haz clic para seleccionar un archivo</p>
+                    <div class="flex items-center justify-center gap-3 flex-wrap">
+                        <span class="file-tag"><i class="fa-solid fa-image"></i> PNG, JPG, WebP</span>
+                        <span class="file-tag"><i class="fa-solid fa-weight-hanging"></i> Max 20 MB</span>
+                        <span class="file-tag"><i class="fa-solid fa-paste"></i> Ctrl+V para pegar</span>
+                    </div>
+                    <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" class="hidden">
+                </div>
+            </section>
+
+            <!-- ===== PROCESANDO ===== -->
+            <section id="processing-section" class="mt-8 hidden">
+                <div class="feature-card text-center py-12">
+                    <div class="flex justify-center mb-6">
+                        <div class="relative">
+                            <div class="spinner" style="width:48px;height:48px;border-width:3px;"></div>
+                            <div class="absolute inset-0 rounded-full border-2 border-emerald-500/30 pulse-ring"></div>
+                        </div>
+                    </div>
+                    <p class="font-display text-lg font-semibold mb-2" id="processing-title">Preparando modelo de IA...</p>
+                    <p class="text-zinc-500 text-sm mb-6" id="processing-subtitle">La primera vez puede tardar unos segundos al descargar el modelo</p>
+                    <div class="max-w-sm mx-auto">
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+                        </div>
+                        <p class="text-xs text-zinc-600 mt-2" id="progress-text">0%</p>
+                    </div>
+                    <div class="mt-6 flex items-center justify-center gap-3 flex-wrap" id="processing-file-info"></div>
+                </div>
+            </section>
+
+            <!-- ===== RESULTADO ===== -->
+            <section id="result-section" class="mt-8 hidden">
+                <div class="fade-in">
+                    <div class="comparison-container checkerboard" id="comparison-container" style="height:450px">
+                        <img id="result-img" style="position:absolute;top:0;left:0;width:100%;height:100%" alt="Sin fondo" draggable="false">
+                        <div class="comparison-before-wrapper" id="before-wrapper">
+                            <img id="original-img" alt="Original" draggable="false">
+                        </div>
+                        <div class="comparison-divider" id="comparison-divider">
+                            <div class="comparison-handle"><i class="fa-solid fa-arrows-left-right"></i></div>
+                        </div>
+                        <div class="comparison-label left-4" style="color:var(--muted)">Original</div>
+                        <div class="comparison-label right-4" style="color:var(--accent)">Sin fondo</div>
+                    </div>
+                    <div class="flex flex-col sm:flex-row items-center justify-center gap-3 mt-6">
+                        <button class="btn-primary" id="download-btn"><i class="fa-solid fa-download"></i> Descargar PNG</button>
+                        <button class="btn-secondary" id="new-image-btn"><i class="fa-solid fa-arrow-rotate-left"></i> Nueva imagen</button>
+                    </div>
+                    <div class="flex items-center justify-center gap-3 mt-4 flex-wrap" id="result-file-info"></div>
+                </div>
+            </section>
+
+            <!-- ===== ERROR ===== -->
+            <section id="error-section" class="mt-8 hidden">
+                <div class="feature-card text-center py-10" style="border-color:rgba(239,68,68,0.2)">
+                    <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-red-500/10 mb-4">
+                        <i class="fa-solid fa-triangle-exclamation text-2xl text-red-400"></i>
+                    </div>
+                    <p class="font-display text-lg font-semibold mb-2">Error al procesar la imagen</p>
+                    <p class="text-zinc-500 text-sm mb-6 max-w-md mx-auto" id="error-message">Ocurrio un problema inesperado.</p>
+                    <button class="btn-secondary" id="error-retry-btn"><i class="fa-solid fa-arrow-rotate-left"></i> Intentar de nuevo</button>
+                </div>
+            </section>
+
+            <!-- ===== CARACTERISTICAS ===== -->
+            <section class="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="feature-card">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-lock text-emerald-400"></i>
+                    </div>
+                    <h3 class="font-display font-semibold mb-1">100% Privado</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Tu imagen nunca sale de tu dispositivo. Todo el procesamiento ocurre localmente en tu navegador.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-bolt text-cyan-400"></i>
+                    </div>
+                    <h3 class="font-display font-semibold mb-1">Rapido y Gratuito</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Sin limites de uso ni costos ocultos. Acelerado por hardware cuando tu dispositivo lo soporta.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-gem text-amber-400"></i>
+                    </div>
+                    <h3 class="font-display font-semibold mb-1">Alta Calidad</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Modelo de IA avanzado que detecta bordes complejos como pelo, texturas y objetos transparentes.</p>
+                </div>
+            </section>
+        </main>
+
+        <footer class="text-center pb-8 px-6">
+            <p class="text-zinc-600 text-xs">
+                Impulsado por
+                <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener" class="text-zinc-500 hover:text-emerald-400 transition-colors underline underline-offset-2">@imgly/background-removal</a>
+                — Modelo de segmentacion ejecutado completamente en el navegador
+            </p>
+        </footer>
+    </div>
+
+    <script type="module">
+        // =============================================
+        // Partículas de fondo
+        // =============================================
+        const pCanvas = document.getElementById('particles-canvas');
+        const pCtx = pCanvas.getContext('2d');
+        let pts = [];
+
+        function resizeP() { pCanvas.width = innerWidth; pCanvas.height = innerHeight; }
+        resizeP();
+        addEventListener('resize', resizeP);
+
+        for (let i = 0; i < 45; i++) {
+            pts.push({
+                x: Math.random() * innerWidth,
+                y: Math.random() * innerHeight,
+                vx: (Math.random() - 0.5) * 0.3,
+                vy: (Math.random() - 0.5) * 0.3,
+                r: Math.random() * 1.5 + 0.5,
+                o: Math.random() * 0.25 + 0.08
+            });
+        }
+
+        function drawParticles() {
+            pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+            pts.forEach(p => {
+                p.x += p.vx; p.y += p.vy;
+                if (p.x < 0) p.x = pCanvas.width;
+                if (p.x > pCanvas.width) p.x = 0;
+                if (p.y < 0) p.y = pCanvas.height;
+                if (p.y > pCanvas.height) p.y = 0;
+                pCtx.beginPath();
+                pCtx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                pCtx.fillStyle = `rgba(16,185,129,${p.o})`;
+                pCtx.fill();
+            });
+            for (let i = 0; i < pts.length; i++) {
+                for (let j = i + 1; j < pts.length; j++) {
+                    const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d < 140) {
+                        pCtx.beginPath();
+                        pCtx.moveTo(pts[i].x, pts[i].y);
+                        pCtx.lineTo(pts[j].x, pts[j].y);
+                        pCtx.strokeStyle = `rgba(16,185,129,${0.05 * (1 - d / 140)})`;
+                        pCtx.lineWidth = 0.5;
+                        pCtx.stroke();
+                    }
+                }
+            }
+            requestAnimationFrame(drawParticles);
+        }
+        drawParticles();
+
+        // =============================================
+        // Referencias DOM
+        // =============================================
+        const $ = id => document.getElementById(id);
+        const uploadSection = $('upload-section');
+        const processingSection = $('processing-section');
+        const resultSection = $('result-section');
+        const errorSection = $('error-section');
+        const uploadZone = $('upload-zone');
+        const fileInput = $('file-input');
+        const processingTitle = $('processing-title');
+        const processingSubtitle = $('processing-subtitle');
+        const progressFill = $('progress-fill');
+        const progressText = $('progress-text');
+        const processingFileInfo = $('processing-file-info');
+        const originalImg = $('original-img');
+        const resultImg = $('result-img');
+        const comparisonContainer = $('comparison-container');
+        const beforeWrapper = $('before-wrapper');
+        const comparisonDivider = $('comparison-divider');
+        const downloadBtn = $('download-btn');
+        const newImageBtn = $('new-image-btn');
+        const errorRetryBtn = $('error-retry-btn');
+        const errorMessage = $('error-message');
+        const resultFileInfo = $('result-file-info');
+
+        // =============================================
+        // Estado
+        // =============================================
+        let currentResultBlob = null;
+        let currentFileName = 'imagen';
+        let sliderPos = 50;
+        let dragging = false;
+
+        // =============================================
+        // Toast
+        // =============================================
+        function toast(msg, type = 'info') {
+            const c = $('toast-container');
+            const el = document.createElement('div');
+            el.className = 'toast';
+            const icons = {
+                info: 'fa-circle-info text-cyan-400',
+                success: 'fa-circle-check text-emerald-400',
+                error: 'fa-circle-xmark text-red-400',
+                warning: 'fa-triangle-exclamation text-amber-400'
+            };
+            el.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i><span>${msg}</span>`;
+            c.appendChild(el);
+            setTimeout(() => { el.classList.add('toast-out'); setTimeout(() => el.remove(), 300); }, 4000);
+        }
+
+        // =============================================
+        // Navegación entre secciones
+        // =============================================
+        function show(id) {
+            [uploadSection, processingSection, resultSection, errorSection].forEach(s => s.classList.add('hidden'));
+            const map = { upload: uploadSection, processing: processingSection, result: resultSection, error: errorSection };
+            const t = map[id];
+            if (t) {
+                t.classList.remove('hidden');
+                const f = t.querySelector('.fade-in');
+                if (f) { f.style.animation = 'none'; f.offsetHeight; f.style.animation = ''; }
+            }
+        }
+
+        // =============================================
+        // Utilidades de archivo
+        // =============================================
+        function fmtSize(b) {
+            if (b < 1024) return b + ' B';
+            if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+            return (b / 1048576).toFixed(1) + ' MB';
+        }
+
+        function validate(file) {
+            if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+                toast('Formato no soportado. Usa PNG, JPG o WebP.', 'error'); return false;
+            }
+            if (file.size > 20 * 1048576) {
+                toast('Archivo demasiado grande. Maximo 20 MB.', 'error'); return false;
+            }
+            return true;
+        }
+
+        // Redimensionar imagen si excede el limite
+        function resizeIfNeeded(file, max = 2048) {
+            return new Promise(resolve => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    if (img.width <= max && img.height <= max) {
+                        return resolve({ file, w: img.width, h: img.height, resized: false });
+                    }
+                    let nw, nh;
+                    if (img.width > img.height) { nw = max; nh = Math.round(img.height * max / img.width); }
+                    else { nh = max; nw = Math.round(img.width * max / img.height); }
+                    const c = document.createElement('canvas'); c.width = nw; c.height = nh;
+                    c.getContext('2d').drawImage(img, 0, 0, nw, nh);
+                    c.toBlob(blob => {
+                        resolve({ file: new File([blob], file.name, { type: file.type }), w: nw, h: nh, resized: true });
+                    }, file.type, 0.92);
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve({ file, w: 0, h: 0, resized: false }); };
+                img.src = url;
+            });
+        }
+
+        // =============================================
+        // Manejo de archivo
+        // =============================================
+        function handleFile(file) {
+            if (!validate(file)) return;
+            currentFileName = file.name.replace(/\.[^/.]+$/, '');
+            resizeIfNeeded(file).then(({ file: pf, w, h, resized }) => {
+                if (resized) toast(`Redimensionada a ${w}x${h} para procesamiento mas rapido`, 'info');
+                processingFileInfo.innerHTML = `
+                    <span class="file-tag"><i class="fa-solid fa-image"></i> ${w}x${h}</span>
+                    <span class="file-tag"><i class="fa-solid fa-weight-hanging"></i> ${fmtSize(pf.size)}</span>`;
+                show('processing');
+                processImage(pf);
+            });
+        }
+
+        // =============================================
+        // Procesamiento principal
+        // =============================================
+        async function processImage(file) {
+            try {
+                processingTitle.textContent = 'Cargando motor de IA...';
+                processingSubtitle.textContent = 'Importando la libreria de procesamiento';
+                progressFill.style.width = '5%';
+                progressText.textContent = '5%';
+
+                // Importar librería de forma dinámica
+                const mod = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal/dist/index.mjs');
+                const removeBg = mod.default || mod.removeBackground || mod.imglyRemoveBackground;
+
+                if (typeof removeBg !== 'function') {
+                    throw new Error('No se encontro la funcion de eliminacion de fondo en la libreria cargada.');
+                }
+
+                processingTitle.textContent = 'Procesando imagen...';
+                processingSubtitle.textContent = 'El modelo de IA esta analizando y eliminando el fondo';
+
+                const resultBlob = await removeBg(file, {
+                    publicPath: 'https://cdn.jsdelivr.net/npm/@imgly/background-removal/dist/',
+                    progress: (key, current, total) => {
+                        let pct = 0, title = 'Procesando...', sub = '';
+                        if (key.includes('fetch') || key.includes('download')) {
+                            title = 'Descargando modelo de IA...';
+                            sub = 'Solo se descarga una vez, luego se cachea en tu navegador';
+                            pct = total > 0 ? Math.round(current / total * 50) + 5 : 15;
+                        } else if (key.includes('compute') || key.includes('inference')) {
+                            title = 'Eliminando fondo...';
+                            sub = 'Analizando la imagen con inteligencia artificial';
+                            pct = total > 0 ? Math.round(current / total * 45) + 50 : 65;
+                        } else {
+                            pct = total > 0 ? Math.round(current / total * 100) : 30;
+                        }
+                        pct = Math.min(95, Math.max(5, pct));
+                        processingTitle.textContent = title;
+                        processingSubtitle.textContent = sub;
+                        progressFill.style.width = pct + '%';
+                        progressText.textContent = pct + '%';
+                    }
+                });
+
+                progressFill.style.width = '100%';
+                progressText.textContent = '100%';
+                processingTitle.textContent = 'Completado';
+                processingSubtitle.textContent = 'Preparando vista previa...';
+                await new Promise(r => setTimeout(r, 400));
+
+                currentResultBlob = resultBlob;
+                showResult(file, resultBlob);
+                toast('Fondo eliminado exitosamente', 'success');
+
+            } catch (err) {
+                console.error('Error al procesar:', err);
+                errorMessage.textContent = err.message || 'Ocurrio un error desconocido. Verifica tu conexion a internet e intenta de nuevo.';
+                show('error');
+            }
+        }
+
+        // =============================================
+        // Mostrar resultado
+        // =============================================
+        function showResult(origFile, resBlob) {
+            const oUrl = URL.createObjectURL(origFile);
+            const rUrl = URL.createObjectURL(resBlob);
+            originalImg.src = oUrl;
+            resultImg.src = rUrl;
+
+            Promise.all([
+                new Promise(r => { originalImg.onload = r; originalImg.onerror = r; }),
+                new Promise(r => { resultImg.onload = r; resultImg.onerror = r; })
+            ]).then(() => {
+                const iw = resultImg.naturalWidth, ih = resultImg.naturalHeight;
+                const cw = comparisonContainer.clientWidth;
+                const ch = Math.min(500, Math.round(cw * ih / iw));
+                comparisonContainer.style.height = ch + 'px';
+
+                sliderPos = 50;
+                updateSlider();
+
+                resultFileInfo.innerHTML = `
+                    <span class="file-tag"><i class="fa-solid fa-expand"></i> ${iw}x${ih}</span>
+                    <span class="file-tag"><i class="fa-solid fa-weight-hanging"></i> ${fmtSize(resBlob.size)}</span>
+                    <span class="file-tag" style="color:var(--accent)"><i class="fa-solid fa-check"></i> PNG con transparencia</span>`;
+
+                show('result');
+            });
+        }
+
+        // =============================================
+        // Comparador antes / después
+        // =============================================
+        function updateSlider() {
+            const cw = comparisonContainer.clientWidth;
+            const px = (sliderPos / 100) * cw;
+            beforeWrapper.style.width = px + 'px';
+            originalImg.style.width = cw + 'px';
+            comparisonDivider.style.left = px + 'px';
+        }
+
+        function posFromX(cx) {
+            const r = comparisonContainer.getBoundingClientRect();
+            return Math.max(0, Math.min(100, ((cx - r.left) / r.width) * 100));
+        }
+
+        comparisonDivider.addEventListener('mousedown', e => { e.preventDefault(); dragging = true; });
+        comparisonContainer.addEventListener('mousedown', e => { dragging = true; sliderPos = posFromX(e.clientX); updateSlider(); });
+        document.addEventListener('mousemove', e => { if (dragging) { sliderPos = posFromX(e.clientX); updateSlider(); } });
+        document.addEventListener('mouseup', () => { dragging = false; });
+
+        comparisonDivider.addEventListener('touchstart', e => { e.preventDefault(); dragging = true; }, { passive: false });
+        comparisonContainer.addEventListener('touchstart', e => { dragging = true; sliderPos = posFromX(e.touches[0].clientX); updateSlider(); });
+        document.addEventListener('touchmove', e => { if (dragging) { sliderPos = posFromX(e.touches[0].clientX); updateSlider(); } });
+        document.addEventListener('touchend', () => { dragging = false; });
+
+        addEventListener('resize', () => {
+            if (!resultSection.classList.contains('hidden')) {
+                if (resultImg.naturalWidth && resultImg.naturalHeight) {
+                    const cw = comparisonContainer.clientWidth;
+                    comparisonContainer.style.height = Math.min(500, Math.round(cw * resultImg.naturalHeight / resultImg.naturalWidth)) + 'px';
+                }
+                updateSlider();
+            }
+        });
+
+        // =============================================
+        // Eventos de subida
+        // =============================================
+        uploadZone.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+        fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); fileInput.value = ''; });
+
+        uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+        uploadZone.addEventListener('dragleave', e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); });
+        uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+
+        document.addEventListener('paste', e => {
+            if (!uploadSection.classList.contains('hidden')) {
+                const items = e.clipboardData?.items;
+                if (!items) return;
+                for (const item of items) {
+                    if (item.type.startsWith('image/')) {
+                        e.preventDefault();
+                        const f = item.getAsFile();
+                        if (f) handleFile(f);
+                        break;
+                    }
+                }
+            }
+        });
+        document.addEventListener('dragover', e => e.preventDefault());
+        document.addEventListener('drop', e => e.preventDefault());
+
+        // =============================================
+        // Botones
+        // =============================================
+        downloadBtn.addEventListener('click', () => {
+            if (!currentResultBlob) return;
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(currentResultBlob);
+            a.download = `${currentFileName}-sin-fondo.png`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            toast('Imagen descargada', 'success');
+        });
+
+        newImageBtn.addEventListener('click', () => {
+            currentResultBlob = null; originalImg.src = ''; resultImg.src = '';
+            progressFill.style.width = '0%'; progressText.textContent = '0%';
+            show('upload');
+        });
+
+        errorRetryBtn.addEventListener('click', () => show('upload'));
+    </script>
+</body>
+</html>
